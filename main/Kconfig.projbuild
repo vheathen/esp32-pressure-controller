@@ -1,0 +1,11 @@
+menu "Button"
+    config BUTTON_GPIO
+        int "GPIO for the button"
+        range 1 38
+        default 27
+
+    config BUTTON_ACTIVE_LEVEL
+        int "Button active Level"
+        range 0 1
+        default 0
+endmenu
