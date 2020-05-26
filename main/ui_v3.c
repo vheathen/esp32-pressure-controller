@@ -23,6 +23,7 @@
  *********************/
 #define TAG "demo"
 #define GAUGE_COLS 2
+#define MAX_INTERACTION_TIME_MS 5000
 
 /**********************
  *      TYPEDEFS
@@ -38,16 +39,25 @@ typedef struct
  **********************/
 static void lv_tick_task(void *arg);
 void guiTask(void *pvParameter);
+
 void gui_monitor_cb(lv_disp_drv_t *disp_drv, uint32_t time, uint32_t px);
 void ui_init(void);
+
 lv_obj_t *create_gauge(uint16_t row, uint16_t col);
 void refresh_gauge(lv_obj_t *container, int16_t value);
 void refresh_gauges();
+void select_next_gauge();
+
+void group_focus_cb(lv_group_t *group);
+void stop_interaction_cb(void *arg);
 
 /**********************
  *  STATIC VARIABLES
  **********************/
 static lv_obj_t *gauges[CHAN_COUNT];
+static lv_group_t *selection_group;
+static lv_obj_t *hidden_selection;
+static esp_timer_handle_t interaction_timer = NULL;
 
 /**********************
  *   APPLICATION MAIN
@@ -127,6 +137,11 @@ void guiTask(void *pvParameter)
       refresh_gauges();
     }
 
+    if ((ulNotifiedValue & 0x02) != 0)
+    {
+      select_next_gauge();
+    }
+
     //Try to lock the semaphore, if success, call lvgl stuff
     if (xSemaphoreTake(xGuiSemaphore, (TickType_t)10) == pdTRUE)
     {
@@ -144,8 +159,29 @@ void gui_monitor_cb(lv_disp_drv_t *disp_drv, uint32_t time, uint32_t px)
   ESP_LOGI(TAG, "%d px refreshed in %d ms", px, time);
 }
 
+void group_focus_cb(lv_group_t *group)
+{
+  ESP_LOGI(TAG, "Group focus event");
+  if (lv_group_get_focused(group) == hidden_selection)
+    ESP_LOGI(TAG, "Hidden obj got focused");
+}
+
 void ui_init(void)
 {
+  const esp_timer_create_args_t interaction_timer_args = {
+      .callback = &stop_interaction_cb,
+      .name = "interaction_watchdog"};
+
+  ESP_ERROR_CHECK(esp_timer_create(&interaction_timer_args, &interaction_timer));
+
+  hidden_selection = lv_obj_create(lv_scr_act(), NULL);
+  lv_obj_set_hidden(hidden_selection, true);
+  // lv_obj_set_event_cb(hidden_selection, hidden_selection_event_cb);
+
+  selection_group = lv_group_create();
+  lv_group_add_obj(selection_group, hidden_selection);
+  lv_group_set_focus_cb(selection_group, group_focus_cb);
+
   for (int col = 1; col <= GAUGE_COLS; col++)
   {
     for (int row = 1; (row - 1) * GAUGE_COLS + col <= CHAN_COUNT; row++)
@@ -230,6 +266,8 @@ lv_obj_t *create_gauge(uint16_t row, uint16_t col)
 
   refresh_gauge(container, PRESSURE_SENSOR_ABSENT);
 
+  lv_group_add_obj(selection_group, container);
+
   return container;
 }
 
@@ -293,4 +331,23 @@ void refresh_gauges()
   {
     refresh_gauge(gauges[i], pressures[i]);
   }
+}
+
+void event_cb(lv_obj_t *obj, lv_event_t event)
+{
+  ESP_LOGI(TAG, "Event: %d", event);
+}
+
+void select_next_gauge()
+{
+  esp_timer_stop(interaction_timer);
+  ESP_ERROR_CHECK(esp_timer_start_once(interaction_timer, MAX_INTERACTION_TIME_MS * 1000)); // in microseconds
+
+  lv_group_focus_next(selection_group);
+}
+
+void stop_interaction_cb(void *arg)
+{
+  esp_timer_stop(interaction_timer);
+  lv_group_focus_obj(hidden_selection);
 }
