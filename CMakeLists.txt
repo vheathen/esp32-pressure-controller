@@ -2,7 +2,13 @@
 # in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.5)
 
-set(EXTRA_COMPONENT_DIRS ${CMAKE_CURRENT_LIST_DIR}/../components)
+set(EXTRA_COMPONENT_DIRS 
+  ${CMAKE_CURRENT_LIST_DIR}/../components 
+  components/lv_port_esp32/components/lv_examples 
+  components/lv_port_esp32/components/lvgl 
+  components/lv_port_esp32/components/lvgl_esp32_drivers/lvgl_tft 
+  components/lv_port_esp32/components/lvgl_esp32_drivers/lvgl_touch 
+  components/lv_port_esp32/components/lvgl_esp32_drivers)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(pressure_monitor)
