@@ -21,6 +21,9 @@
 /*********************
  *      DEFINES
  *********************/
+// define button events, check button.h for details
+_UI_EVENTS(UI_EVENT)
+
 #define TAG "demo"
 #define GAUGE_COLS 2
 #define MAX_INTERACTION_TIME_MS 5000
@@ -51,6 +54,7 @@ void refresh_gauge(lv_obj_t *container);
 void refresh_gauges();
 void select_next_gauge();
 
+void restart_interaction_timer();
 void group_focus_cb(lv_group_t *group);
 void stop_interaction_cb(void *arg);
 
@@ -135,14 +139,24 @@ void guiTask(void *pvParameter)
     if (ulNotifiedValue != 0)
       ESP_LOGI(TAG, "N: %d", ulNotifiedValue);
 
-    if ((ulNotifiedValue & 0x01) != 0)
+    if ((ulNotifiedValue & UI_PRESSURE_CHANGED) != 0)
     {
       refresh_gauges();
     }
 
-    if ((ulNotifiedValue & 0x02) != 0)
+    if ((ulNotifiedValue & UI_BUTTON_TAPPED) != 0)
     {
       select_next_gauge();
+    }
+
+    if ((ulNotifiedValue & UI_BUTTON_PUSHED) != 0)
+    {
+      restart_interaction_timer();
+    }
+
+    if ((ulNotifiedValue & UI_BUTTON_HELD_3_SEC) != 0)
+    {
+      ESP_LOGI(TAG, "Button held");
     }
 
     //Try to lock the semaphore, if success, call lvgl stuff
@@ -351,9 +365,6 @@ void event_cb(lv_obj_t *obj, lv_event_t event)
 
 void select_next_gauge()
 {
-  esp_timer_stop(interaction_timer);
-  ESP_ERROR_CHECK(esp_timer_start_once(interaction_timer, MAX_INTERACTION_TIME_MS * 1000)); // in microseconds
-
   lv_group_focus_next(selection_group);
 }
 
@@ -361,4 +372,10 @@ void stop_interaction_cb(void *arg)
 {
   esp_timer_stop(interaction_timer);
   lv_group_focus_obj(hidden_selection);
+}
+
+void restart_interaction_timer()
+{
+  esp_timer_stop(interaction_timer);
+  ESP_ERROR_CHECK(esp_timer_start_once(interaction_timer, MAX_INTERACTION_TIME_MS * 1000)); // in microseconds
 }
