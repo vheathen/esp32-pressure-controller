@@ -1,4 +1,4 @@
-set(SOURCES main.c adc_esp32.c button.c ui.c)
+set(SOURCES main.c pressure_sensors.c button.c ui.c)
 
 idf_component_register(
   SRCS ${SOURCES}

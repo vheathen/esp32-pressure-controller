@@ -11,7 +11,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "adc_esp32.h"
+#include "pressure_sensors.h"
 #include "ui.h"
 #include "button.h"
 

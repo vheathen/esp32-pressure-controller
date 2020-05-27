@@ -16,9 +16,9 @@
 #include "esp_adc_cal.h"
 #include "esp_log.h"
 
-#include "adc_esp32.h"
+#include "pressure_sensors.h"
 
-static const char *TAG = "ADC";
+static const char *TAG = "SENSORS";
 
 /*
 860 mV - 100 kPa
@@ -47,6 +47,8 @@ static const adc_channel_t reference_voltage_channel = ADC_CHANNEL_7; // GPIO35
 #define REF_DIV_R2 1430
 
 static const double ref_voltage_div = (double)REF_DIV_R2 / (REF_DIV_R1 + REF_DIV_R2);
+
+static uint32_t reference_voltage;
 
 #define INPUT_DIV_R1 1130
 #define INPUT_DIV_R2 2640
@@ -290,7 +292,7 @@ void measure_reference_voltage_task(void *pvParameters)
         {
             // startTick = xTaskGetTickCount();
 
-            uint32_t reference_voltage = measure_reference_voltage();
+            reference_voltage = measure_reference_voltage();
 
             for (int i = 0; i < CHAN_COUNT; i++)
             {

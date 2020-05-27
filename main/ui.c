@@ -11,7 +11,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
-#include "adc_esp32.h"
+#include "pressure_sensors.h"
 #include "ui.h"
 
 /* Littlevgl specific */

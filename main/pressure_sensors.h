@@ -1,5 +1,5 @@
-#ifndef _ADC_ESP32_H_
-#define _ADC_ESP32_H_
+#ifndef _PRESSURE_SENSORS_H_
+#define _PRESSURE_SENSORS_H_
 
 #include <limits.h>
 #include "driver/adc.h"
@@ -25,4 +25,4 @@ void measure_start(TaskHandle_t handle);
 
 int32_t get_pressure(uint16_t index);
 
-#endif // _ADC_ESP32_H_
+#endif // _PRESSURE_SENSORS_H_
