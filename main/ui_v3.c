@@ -24,13 +24,16 @@
 #define TAG "demo"
 #define GAUGE_COLS 2
 #define MAX_INTERACTION_TIME_MS 5000
+#define PRESSURE_SENSOR_ABSENT_TEXT "-"
+#define PRESSURE_SENSOR_OVERLOAD_TEXT "OVERLOAD"
+#define PRESSURE_REFERENCE_POWER_ERROR_TEXT "RefV Err"
 
 /**********************
  *      TYPEDEFS
  **********************/
 typedef struct
 {
-  uint8_t index;
+  uint16_t index;
   int16_t value;
 } gauge_data_t;
 
@@ -43,8 +46,8 @@ void guiTask(void *pvParameter);
 void gui_monitor_cb(lv_disp_drv_t *disp_drv, uint32_t time, uint32_t px);
 void ui_init(void);
 
-lv_obj_t *create_gauge(uint16_t row, uint16_t col);
-void refresh_gauge(lv_obj_t *container, int16_t value);
+void create_gauge(lv_obj_t *gauges, uint16_t sensor_index);
+void refresh_gauge(lv_obj_t *container);
 void refresh_gauges();
 void select_next_gauge();
 
@@ -54,7 +57,7 @@ void stop_interaction_cb(void *arg);
 /**********************
  *  STATIC VARIABLES
  **********************/
-static lv_obj_t *gauges[CHAN_COUNT];
+static lv_obj_t *gauges;
 static lv_group_t *selection_group;
 static lv_obj_t *hidden_selection;
 static esp_timer_handle_t interaction_timer = NULL;
@@ -182,29 +185,33 @@ void ui_init(void)
   lv_group_add_obj(selection_group, hidden_selection);
   lv_group_set_focus_cb(selection_group, group_focus_cb);
 
-  for (int col = 1; col <= GAUGE_COLS; col++)
+  gauges = lv_cont_create(lv_scr_act(), NULL);
+
+  lv_obj_set_style_local_pad_inner(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(9));
+  lv_obj_set_style_local_pad_left(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(10));
+  lv_obj_set_style_local_pad_right(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(0));
+  lv_obj_set_style_local_pad_top(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(9));
+
+  // lv_obj_add_style(gauges, LV_CONT_PART_MAIN, &style);
+  lv_cont_set_fit(gauges, LV_FIT_PARENT);
+  lv_cont_set_layout(gauges, LV_LAYOUT_PRETTY_TOP);
+
+  for (uint16_t i = 0; i < CHAN_COUNT; i++)
   {
-    for (int row = 1; (row - 1) * GAUGE_COLS + col <= CHAN_COUNT; row++)
-    {
-      gauges[(row - 1) * GAUGE_COLS + col - 1] = create_gauge(row, col);
-    }
+    create_gauge(gauges, i);
   }
 }
 
-lv_obj_t *create_gauge(uint16_t row, uint16_t col)
+void create_gauge(lv_obj_t *gauges, uint16_t sensor_index)
 {
-  uint32_t index = (row - 1) * GAUGE_COLS + col;
+  gauge_data_t *gauge_data = calloc(sizeof(gauge_data_t), 1);
+  gauge_data->index = sensor_index;
+  gauge_data->value = INT16_MIN;
 
-  gauge_data_t gauge_data;
-  gauge_data.index = index;
-  gauge_data.value = INT16_MIN;
-
-  lv_obj_t *container = lv_obj_create(lv_scr_act(), NULL);
-
-  lv_obj_set_user_data(container, &gauge_data);
-
+  lv_obj_t *container = lv_obj_create(gauges, NULL);
   lv_obj_set_size(container, 105, 71);
-  lv_obj_set_pos(container, (col - 1) * 115 + 10, (row - 1) * 77 + 6);
+
+  lv_obj_set_user_data(container, gauge_data);
 
   // gauge
 
@@ -241,6 +248,9 @@ lv_obj_t *create_gauge(uint16_t row, uint16_t col)
   // value label
 
   label = lv_label_create(gauge, NULL);
+  lv_label_set_text(label, PRESSURE_SENSOR_ABSENT_TEXT);
+  lv_obj_align(label, NULL, LV_ALIGN_CENTER, 0, 0);
+  lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
 
   // static labels
 
@@ -254,7 +264,7 @@ lv_obj_t *create_gauge(uint16_t row, uint16_t col)
 
   label = lv_label_create(container, NULL);
   lv_obj_add_style(label, LV_LABEL_PART_MAIN, &label_style);
-  lv_label_set_text_fmt(label, "%d", index);
+  lv_label_set_text_fmt(label, "%d", sensor_index + 1);
   lv_obj_align(label, NULL, LV_ALIGN_IN_TOP_LEFT, LV_DPX(5), LV_DPX(3));
 
   // unit
@@ -264,16 +274,13 @@ lv_obj_t *create_gauge(uint16_t row, uint16_t col)
   lv_label_set_static_text(label, "kPa");
   lv_obj_align(label, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, -5);
 
-  refresh_gauge(container, PRESSURE_SENSOR_ABSENT);
-
   lv_group_add_obj(selection_group, container);
-
-  return container;
 }
 
-void refresh_gauge(lv_obj_t *container, int16_t value)
+void refresh_gauge(lv_obj_t *container)
 {
-  gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data_ptr(container);
+  gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data(container);
+  int32_t value = get_pressure(data->index);
 
   if (data->value != value)
   {
@@ -300,15 +307,15 @@ void refresh_gauge(lv_obj_t *container, int16_t value)
     switch (value)
     {
     case PRESSURE_REFERENCE_POWER_ERROR:
-      lv_snprintf(text_value, sizeof(text_value), "%s", "RefV Err");
+      lv_snprintf(text_value, sizeof(text_value), "%s", PRESSURE_REFERENCE_POWER_ERROR_TEXT);
       break;
 
     case PRESSURE_SENSOR_ABSENT:
-      lv_snprintf(text_value, sizeof(text_value), "%s", "-");
+      lv_snprintf(text_value, sizeof(text_value), "%s", PRESSURE_SENSOR_ABSENT_TEXT);
       break;
 
     case PRESSURE_SENSOR_OVERLOAD:
-      lv_snprintf(text_value, sizeof(text_value), "%s", "OVERLOAD");
+      lv_snprintf(text_value, sizeof(text_value), "%s", PRESSURE_SENSOR_OVERLOAD_TEXT);
       gauge_value = lv_linemeter_get_max_value(gauge);
       break;
 
@@ -319,6 +326,7 @@ void refresh_gauge(lv_obj_t *container, int16_t value)
     }
 
     lv_linemeter_set_value(gauge, gauge_value);
+
     lv_label_set_text(gauge_text, text_value);
     lv_obj_align(gauge_text, NULL, LV_ALIGN_CENTER, 0, 0);
     lv_label_set_align(gauge_text, LV_LABEL_ALIGN_CENTER);
@@ -327,10 +335,13 @@ void refresh_gauge(lv_obj_t *container, int16_t value)
 
 void refresh_gauges()
 {
-  for (int i = 0; i < CHAN_COUNT; i++)
+  lv_obj_t *gauge = lv_obj_get_child(gauges, NULL);
+
+  while (gauge)
   {
-    refresh_gauge(gauges[i], pressures[i]);
-  }
+    refresh_gauge(gauge);
+    gauge = lv_obj_get_child(gauges, gauge);
+  };
 }
 
 void event_cb(lv_obj_t *obj, lv_event_t event)

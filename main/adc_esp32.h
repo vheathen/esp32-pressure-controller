@@ -21,8 +21,8 @@ static const adc_channel_t channels[] = {
     ADC_CHANNEL_6  // GPIO34
 };
 
-extern int32_t pressures[CHAN_COUNT];
-
 void measure_start(TaskHandle_t handle);
+
+int32_t get_pressure(uint16_t index);
 
 #endif // _ADC_ESP32_H_

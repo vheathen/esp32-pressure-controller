@@ -331,3 +331,8 @@ void measure_start(TaskHandle_t handle)
     xTaskCreate(measure_reference_voltage_task, "REF_VOLT", 4096 * 2, NULL, 2, NULL);
     // xTaskCreate(wait_for_reference_voltage_and_start_measure_task, "WAIT_FOR_REF_VOLTAGE", 4096 * 2, NULL, 2, NULL);
 }
+
+int32_t get_pressure(uint16_t index)
+{
+    return pressures[index];
+}
