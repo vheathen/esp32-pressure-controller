@@ -4,6 +4,8 @@
 #include <limits.h>
 #include "driver/adc.h"
 
+#include "utils.h"
+
 enum pressure_sensor_states
 {
   PRESSURE_REFERENCE_POWER_ERROR = INT8_MIN,
@@ -13,16 +15,21 @@ enum pressure_sensor_states
 
 #define CHAN_COUNT 5
 
-static const adc_channel_t channels[] = {
-    ADC_CHANNEL_0, // GPIO36
-    ADC_CHANNEL_3, // GPIO39
-    ADC_CHANNEL_4, // GPIO32
-    ADC_CHANNEL_5, // GPIO33
-    ADC_CHANNEL_6  // GPIO34
+#define _SENSOR_EVENTS(EVENT)  \
+  EVENT(SENSOR_REF_V_MEASURED) \
+  EVENT(SENSOR_CALIBRATION_REQUESTED)
+
+enum SENSOR_EVENTS
+{
+  _SENSOR_EVENTS(DEF_INT_EVENT)
+      _SENSOR_EVENT_LAST = ULONG_MAX
 };
+
+_SENSOR_EVENTS(DEF_EVENT_EXTERN)
 
 void measure_start(TaskHandle_t handle);
 
 int32_t get_pressure(uint16_t index);
+void calibrate_sensor(uint16_t index);
 
 #endif // _PRESSURE_SENSORS_H_

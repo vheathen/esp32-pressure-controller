@@ -2,10 +2,7 @@
 #define _UI_H_
 
 #include "limits.h"
-
-#define UI_INT_EVENT(event) int_##event,
-#define UI_EVENT_EXTERN(event) extern const unsigned long event;
-#define UI_EVENT(event) const unsigned long event = (1UL << int_##event);
+#include "utils.h"
 
 #define _UI_EVENTS(EVENT)    \
   EVENT(UI_PRESSURE_CHANGED) \
@@ -15,11 +12,11 @@
 
 enum UI_EVENTS
 {
-  _UI_EVENTS(UI_INT_EVENT)
-      _BTN_EVENT_LAST = ULONG_MAX
+  _UI_EVENTS(DEF_INT_EVENT)
+      _UI_EVENT_LAST = ULONG_MAX
 };
 
-_UI_EVENTS(UI_EVENT_EXTERN)
+_UI_EVENTS(DEF_EVENT_EXTERN)
 
 TaskHandle_t gui_start();
 

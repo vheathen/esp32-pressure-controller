@@ -17,6 +17,7 @@
 #include "esp_log.h"
 
 #include "pressure_sensors.h"
+#include "ui.h"
 
 static const char *TAG = "SENSORS";
 
@@ -27,19 +28,33 @@ static const char *TAG = "SENSORS";
 
 typedef struct
 {
-    uint8_t channel;
+    uint8_t index;
 } channel_config_t;
 
+// sensor task events
+_SENSOR_EVENTS(DEF_EVENT)
+
 #define SENSOR_MAX_PRESSURE 1200000 // Pa
+
+#define SENSOR_MIN_PRESSURE_V_COEFF 0.1
+#define SENSOR_MAX_PRESSURE_V_COEFF 0.9
 
 #define PRESSURE_HISTORY_TLS_INDEX 1
 #define PRESSURE_HISTORY_VALUES_COUNT 5
 #define PRESSURE_MEASURE_CYCLE_MS 40 // in miliseconds
 
-#define DEFAULT_VREF 1100 //Use adc2_vref_to_gpio() to obtain a better estimate
-#define NO_OF_SAMPLES 128 //Multisampling
+#define DEFAULT_VREF 1100 // Use adc2_vref_to_gpio() to obtain a better estimate
+#define NO_OF_SAMPLES 128 // Multisampling
 
 static TaskHandle_t channel_tasks[CHAN_COUNT];
+
+static const adc_channel_t channels[] = {
+    ADC_CHANNEL_0, // GPIO36
+    ADC_CHANNEL_3, // GPIO39
+    ADC_CHANNEL_4, // GPIO32
+    ADC_CHANNEL_5, // GPIO33
+    ADC_CHANNEL_6  // GPIO34
+};
 
 static const adc_channel_t reference_voltage_channel = ADC_CHANNEL_7; // GPIO35
 
@@ -61,12 +76,51 @@ static const adc_bits_width_t width = ADC_WIDTH_BIT_12;
 static const adc_atten_t atten = ADC_ATTEN_DB_11;
 static const adc_unit_t unit = ADC_UNIT_1;
 
-int32_t pressures[CHAN_COUNT] = {PRESSURE_SENSOR_ABSENT};
+static double channel_voltage_shift[CHAN_COUNT] = {[0 ... CHAN_COUNT - 1] = 1.0};
+
+static int32_t pressures[CHAN_COUNT] = {PRESSURE_SENSOR_ABSENT};
 
 static TaskHandle_t uiTaskHandle;
 
-uint32_t
-measure_absolute_voltage(adc_channel_t channel)
+/**********************
+ *  STATIC PROTOTYPES
+ **********************/
+uint32_t measure_absolute_voltage(adc_channel_t channel);
+int32_t get_pressure(uint16_t index);
+uint32_t calc_actual_voltage(uint32_t voltage, double div);
+void freePressureHistory(int index, void *pressure_history);
+void do_calibrate_channel(uint16_t index);
+int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_voltage);
+void measure_init();
+uint32_t measure_reference_voltage();
+void measure_channel_pressure(uint16_t index);
+void measure_channel_pressure_task(void *pvParameters);
+void measure_reference_voltage_task(void *pvParameters);
+void measure_start(TaskHandle_t handle);
+
+void measure_start(TaskHandle_t ui_handle)
+{
+    uiTaskHandle = ui_handle;
+
+    measure_init();
+
+    channel_config_t *ch_cfg;
+    char name[12];
+
+    for (int i = 0; i < CHAN_COUNT; i++)
+    {
+        ch_cfg = malloc(sizeof(channel_config_t));
+        ch_cfg->index = i;
+        sprintf(name, "CH_%d", (int)(channels[i]));
+        // ESP_LOGI(TAG, "Starting channel %d", (int)(ch_cfg->channel));
+        xTaskCreate(measure_channel_pressure_task, name, 4096 * 2, ch_cfg, 2, &channel_tasks[i]);
+    }
+
+    xTaskCreate(measure_reference_voltage_task, "REF_VOLT", 4096 * 2, NULL, 2, NULL);
+    // xTaskCreate(wait_for_reference_voltage_and_start_measure_task, "WAIT_FOR_REF_VOLTAGE", 4096 * 2, NULL, 2, NULL);
+}
+
+uint32_t measure_absolute_voltage(adc_channel_t channel)
 {
 
     uint32_t adc_reading = 0;
@@ -112,7 +166,27 @@ void freePressureHistory(int index, void *pressure_history)
     free(pressure_history);
 }
 
-int32_t calc_pressure(uint32_t voltage, uint32_t reference_voltage)
+void do_calibrate_channel(uint16_t index)
+{
+    adc_channel_t channel = channels[index];
+
+    uint32_t ref_v = measure_reference_voltage();
+
+    // uint32_t actual_zero = 510;
+    // double c = round((double)actual_zero / min_voltage * PRECISION) / PRECISION;
+
+    uint32_t measured_voltage = measure_absolute_voltage(channel);
+
+    if (measured_voltage > 0)
+    {
+        uint32_t actual_min_v = calc_actual_voltage(measured_voltage, input_voltage_div);
+        uint32_t expected_min_v = round(ref_v * SENSOR_MIN_PRESSURE_V_COEFF);
+        double shift = (double)actual_min_v / expected_min_v;
+        channel_voltage_shift[index] = shift;
+    }
+}
+
+int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_voltage)
 {
     // Min pressure = 0 Pa
     // Min pressure voltage = 10% of reference voltage
@@ -121,12 +195,14 @@ int32_t calc_pressure(uint32_t voltage, uint32_t reference_voltage)
 
     int32_t pressure = 0;
 
-    // uint32_t actual_zero = 510;
-    // double c = round((double)actual_zero / min_voltage * PRECISION) / PRECISION;
-    double actual_c = 1.055900621;
+    double shift = channel_voltage_shift[index];
 
-    uint32_t min_voltage = round(reference_voltage * 0.1 * actual_c);
-    uint32_t max_voltage = round(reference_voltage * 0.9 * actual_c);
+    // double actual_c = 1.055900621;
+
+    uint32_t min_voltage = reference_voltage * SENSOR_MIN_PRESSURE_V_COEFF * shift;
+    uint32_t max_voltage = reference_voltage * SENSOR_MAX_PRESSURE_V_COEFF * shift;
+
+    // ESP_LOGI(TAG, "shift: %f, min_v: %d, max_v: %d", shift, min_voltage, max_voltage);
 
     if (voltage > max_voltage)
     {
@@ -193,107 +269,96 @@ uint32_t measure_reference_voltage()
     return calc_actual_voltage(measured_voltage, ref_voltage_div);
 }
 
+void measure_channel_pressure(uint16_t index)
+{
+    uint8_t channel = channels[index];
+
+    uint32_t measured_voltage, actual_voltage, pressure;
+
+    measured_voltage = measure_absolute_voltage(channel);
+
+    if (measured_voltage > 0)
+    {
+        actual_voltage = calc_actual_voltage(measured_voltage, input_voltage_div);
+        pressure = calc_pressure(index, actual_voltage, reference_voltage);
+    }
+    else
+    {
+        actual_voltage = 0;
+        pressure = PRESSURE_SENSOR_ABSENT;
+    }
+
+    if (pressures[index] != pressure)
+    {
+        pressures[index] = pressure;
+        xTaskNotify(uiTaskHandle, UI_PRESSURE_CHANGED, eSetBits);
+        ESP_LOGI(TAG, "\tCh: %d, MeasuredV: %04d mV, ActualV: %04d mV, RefV: %04d mV, Pressure: %06d Pa",
+                 (int)channel, measured_voltage,
+                 actual_voltage, reference_voltage,
+                 pressure);
+    }
+}
+
 void measure_channel_pressure_task(void *pvParameters)
 {
+    uint16_t index = ((channel_config_t *)pvParameters)->index;
+    free(pvParameters);
 
-    uint8_t pos = ((channel_config_t *)pvParameters)->channel;
-    uint8_t channel = channels[((channel_config_t *)pvParameters)->channel];
-
-    uint32_t reference_voltage, measured_voltage, actual_voltage;
-
-    int32_t pressure;
-
-    // pressures[pos] = PRESSURE_SENSOR_ABSENT;
-    // xTaskNotify(uiTaskHandle, (1UL << 0), eSetBits);
+    uint32_t ulNotifiedValue;
 
     while (1)
     {
-        xTaskNotifyWait(ULONG_MAX,          /* Reset the notification value to 0 on entry. */
-                        ULONG_MAX,          /* Reset the notification value to 0 on exit. */
-                        &reference_voltage, /* Notified value pass out in
+        xTaskNotifyWait(0x0,              /* Do not reset the notification value on entry. */
+                        ULONG_MAX,        /* Reset the notification value to 0 on exit. */
+                        &ulNotifiedValue, /* Notified value pass out in
                                               reference_voltage. */
-                        portMAX_DELAY);     /* Block indefinitely. */
+                        portMAX_DELAY);   /* Block indefinitely. */
 
-        measured_voltage = measure_absolute_voltage(channel);
-
-        if (measured_voltage > 0)
+        if ((ulNotifiedValue & SENSOR_REF_V_MEASURED) != 0)
         {
-            actual_voltage = calc_actual_voltage(measured_voltage, input_voltage_div);
-            pressure = calc_pressure(actual_voltage, reference_voltage);
-        }
-        else
-        {
-            actual_voltage = 0;
-            pressure = PRESSURE_SENSOR_ABSENT;
+            measure_channel_pressure(index);
         }
 
-        if (pressures[pos] != pressure)
+        if ((ulNotifiedValue & SENSOR_CALIBRATION_REQUESTED) != 0)
         {
-            pressures[pos] = pressure;
-            xTaskNotify(uiTaskHandle, (1UL << 0UL), eSetBits);
-            ESP_LOGI(TAG, "\tCh: %d, MeasuredV: %04d mV, ActualV: %04d mV, RefV: %04d mV, Pressure: %06d Pa",
-                     (int)channel, measured_voltage,
-                     actual_voltage, reference_voltage,
-                     pressure);
+            ESP_LOGI(TAG, "Got calibration notif");
+            do_calibrate_channel(index);
         }
-
-        // ESP_LOGI(TAG, "Channel: %d, MeasuredV: %04d mV\t ActualV: %04d mV\t Pressure: %06d Pa", (int)channel, measured_voltage, actual_voltage, pressure);
     }
 }
 
 void measure_reference_voltage_task(void *pvParameters)
 {
     {
-        // TickType_t startTick, endTick, diffTick;
-
-        //Continuously sample ADC1
         while (1)
         {
-            // startTick = xTaskGetTickCount();
 
             reference_voltage = measure_reference_voltage();
 
             for (int i = 0; i < CHAN_COUNT; i++)
             {
                 if (channel_tasks[i] != NULL)
-                {
-                    xTaskNotify(channel_tasks[i], reference_voltage, eSetValueWithOverwrite);
-                }
+                    xTaskNotify(channel_tasks[i], SENSOR_REF_V_MEASURED, eSetBits);
             }
-
-            // endTick = xTaskGetTickCount();
-            // diffTick = endTick - startTick;
-
-            // ESP_LOGI(TAG, "Ref voltage: %d mV", reference_voltage);
 
             vTaskDelay(pdMS_TO_TICKS(PRESSURE_MEASURE_CYCLE_MS));
         }
     }
 }
 
-void measure_start(TaskHandle_t handle)
-{
-    uiTaskHandle = handle;
-
-    measure_init();
-
-    channel_config_t *ch_cfg;
-    char name[12];
-
-    for (int i = 0; i < CHAN_COUNT; i++)
-    {
-        ch_cfg = malloc(sizeof(channel_config_t));
-        ch_cfg->channel = i;
-        sprintf(name, "CH_%d", (int)(channels[i]));
-        // ESP_LOGI(TAG, "Starting channel %d", (int)(ch_cfg->channel));
-        xTaskCreate(measure_channel_pressure_task, name, 4096 * 2, ch_cfg, 2, &channel_tasks[i]);
-    }
-
-    xTaskCreate(measure_reference_voltage_task, "REF_VOLT", 4096 * 2, NULL, 2, NULL);
-    // xTaskCreate(wait_for_reference_voltage_and_start_measure_task, "WAIT_FOR_REF_VOLTAGE", 4096 * 2, NULL, 2, NULL);
-}
-
 int32_t get_pressure(uint16_t index)
 {
     return pressures[index];
+}
+
+void calibrate_sensor(uint16_t index)
+{
+    if (channel_tasks[index] != NULL)
+    {
+        xTaskNotify(channel_tasks[index], SENSOR_CALIBRATION_REQUESTED, eSetBits);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Should calibrate sensor, but task handler is NULL. Index: %d", index);
+    }
 }
