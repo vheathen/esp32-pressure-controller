@@ -8,4 +8,8 @@
     action;                                                                                \
   }
 
+#define DEF_INT_EVENT(event) int_##event,
+#define DEF_EVENT_EXTERN(event) extern const unsigned long event;
+#define DEF_EVENT(event) const unsigned long event = (1UL << int_##event);
+
 #endif // _UTILS_H_

@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
+#include "utils.h"
 #include "pressure_sensors.h"
 #include "ui.h"
 
@@ -21,11 +22,10 @@
 /*********************
  *      DEFINES
  *********************/
-// define button events, check button.h for details
-_UI_EVENTS(UI_EVENT)
+// define ui events, check ui.h for implementation and changes
+_UI_EVENTS(DEF_EVENT)
 
-#define TAG "demo"
-#define GAUGE_COLS 2
+#define TAG "UI"
 #define MAX_INTERACTION_TIME_MS 5000
 #define PRESSURE_SENSOR_ABSENT_TEXT "-"
 #define PRESSURE_SENSOR_OVERLOAD_TEXT "OVERLOAD"
@@ -53,6 +53,8 @@ void create_gauge(lv_obj_t *gauges, uint16_t sensor_index);
 void refresh_gauge(lv_obj_t *container);
 void refresh_gauges();
 void select_next_gauge();
+
+void request_sensor_calibration();
 
 void restart_interaction_timer();
 void group_focus_cb(lv_group_t *group);
@@ -156,7 +158,7 @@ void guiTask(void *pvParameter)
 
     if ((ulNotifiedValue & UI_BUTTON_HELD_3_SEC) != 0)
     {
-      ESP_LOGI(TAG, "Button held");
+      request_sensor_calibration();
     }
 
     //Try to lock the semaphore, if success, call lvgl stuff
@@ -178,9 +180,9 @@ void gui_monitor_cb(lv_disp_drv_t *disp_drv, uint32_t time, uint32_t px)
 
 void group_focus_cb(lv_group_t *group)
 {
-  ESP_LOGI(TAG, "Group focus event");
-  if (lv_group_get_focused(group) == hidden_selection)
-    ESP_LOGI(TAG, "Hidden obj got focused");
+  // ESP_LOGI(TAG, "Group focus event");
+  // if (lv_group_get_focused(group) == hidden_selection)
+  //   ESP_LOGI(TAG, "Hidden obj got focused");
 }
 
 void ui_init(void)
@@ -378,4 +380,15 @@ void restart_interaction_timer()
 {
   esp_timer_stop(interaction_timer);
   ESP_ERROR_CHECK(esp_timer_start_once(interaction_timer, MAX_INTERACTION_TIME_MS * 1000)); // in microseconds
+}
+
+void request_sensor_calibration()
+{
+  lv_obj_t *selected = lv_group_get_focused(selection_group);
+
+  if (selected != hidden_selection)
+  {
+    gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data(selected);
+    calibrate_sensor(data->index);
+  }
 }
