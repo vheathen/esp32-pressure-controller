@@ -16,6 +16,7 @@
 #include "esp_adc_cal.h"
 #include "esp_log.h"
 
+#include "stor.h"
 #include "pressure_sensors.h"
 #include "ui.h"
 
@@ -34,7 +35,11 @@ typedef struct
 // sensor task events
 _SENSOR_EVENTS(DEF_EVENT)
 
+#define SENSORS_STORE "sensors"
+
 #define SENSOR_MAX_PRESSURE 1200000 // Pa
+
+#define SENSOR_VOLTAGE_SHIFT_DELIMETER 1000000000000000
 
 #define SENSOR_MIN_PRESSURE_V_COEFF 0.1
 #define SENSOR_MAX_PRESSURE_V_COEFF 0.9
@@ -89,7 +94,7 @@ uint32_t measure_absolute_voltage(adc_channel_t channel);
 int32_t get_pressure(uint16_t index);
 uint32_t calc_actual_voltage(uint32_t voltage, double div);
 void freePressureHistory(int index, void *pressure_history);
-void do_calibrate_channel(uint16_t index);
+void do_calibrate_sensor(uint16_t index);
 int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_voltage);
 void measure_init();
 uint32_t measure_reference_voltage();
@@ -97,6 +102,11 @@ void measure_channel_pressure(uint16_t index);
 void measure_channel_pressure_task(void *pvParameters);
 void measure_reference_voltage_task(void *pvParameters);
 void measure_start(TaskHandle_t handle);
+
+double get_sensor_voltage_shift(uint16_t index);
+void set_sensor_voltage_shift(uint16_t index, double value);
+void persist_sensor_voltage_shift(uint16_t index, double value);
+void load_sensor_voltage_shift(uint16_t index);
 
 void measure_start(TaskHandle_t ui_handle)
 {
@@ -166,7 +176,7 @@ void freePressureHistory(int index, void *pressure_history)
     free(pressure_history);
 }
 
-void do_calibrate_channel(uint16_t index)
+void do_calibrate_sensor(uint16_t index)
 {
     adc_channel_t channel = channels[index];
 
@@ -182,7 +192,7 @@ void do_calibrate_channel(uint16_t index)
         uint32_t actual_min_v = calc_actual_voltage(measured_voltage, input_voltage_div);
         uint32_t expected_min_v = round(ref_v * SENSOR_MIN_PRESSURE_V_COEFF);
         double shift = (double)actual_min_v / expected_min_v;
-        channel_voltage_shift[index] = shift;
+        set_sensor_voltage_shift(index, shift);
     }
 }
 
@@ -195,7 +205,7 @@ int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_volta
 
     int32_t pressure = 0;
 
-    double shift = channel_voltage_shift[index];
+    double shift = get_sensor_voltage_shift(index);
 
     // double actual_c = 1.055900621;
 
@@ -304,6 +314,8 @@ void measure_channel_pressure_task(void *pvParameters)
     uint16_t index = ((channel_config_t *)pvParameters)->index;
     free(pvParameters);
 
+    load_sensor_voltage_shift(index);
+
     uint32_t ulNotifiedValue;
 
     while (1)
@@ -322,7 +334,7 @@ void measure_channel_pressure_task(void *pvParameters)
         if ((ulNotifiedValue & SENSOR_CALIBRATION_REQUESTED) != 0)
         {
             ESP_LOGI(TAG, "Got calibration notif");
-            do_calibrate_channel(index);
+            do_calibrate_sensor(index);
         }
     }
 }
@@ -361,4 +373,33 @@ void calibrate_sensor(uint16_t index)
     {
         ESP_LOGI(TAG, "Should calibrate sensor, but task handler is NULL. Index: %d", index);
     }
+}
+
+double get_sensor_voltage_shift(uint16_t index)
+{
+    return channel_voltage_shift[index];
+}
+
+void set_sensor_voltage_shift(uint16_t index, double value)
+{
+    channel_voltage_shift[index] = value;
+
+    persist_sensor_voltage_shift(index, value);
+}
+
+void persist_sensor_voltage_shift(uint16_t index, double value)
+{
+    uint64_t to_store = value * SENSOR_VOLTAGE_SHIFT_DELIMETER;
+    char k[10];
+    sprintf(k, "%d", index);
+    stor_set_i64(SENSORS_STORE, k, to_store);
+}
+
+void load_sensor_voltage_shift(uint16_t index)
+{
+    char k[10];
+    sprintf(k, "%d", index);
+    uint64_t from_store = stor_get_i64(SENSORS_STORE, k, SENSOR_VOLTAGE_SHIFT_DELIMETER);
+
+    channel_voltage_shift[index] = (double)from_store / SENSOR_VOLTAGE_SHIFT_DELIMETER;
 }

@@ -1,4 +1,4 @@
-set(SOURCES main.c pressure_sensors.c button.c ui.c)
+set(SOURCES main.c pressure_sensors.c button.c ui.c stor.c)
 
 idf_component_register(
   SRCS ${SOURCES}
