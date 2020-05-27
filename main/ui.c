@@ -1,244 +1,381 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "driver/gpio.h"
+#include "esp_freertos_hooks.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "esp_vfs.h"
-#include "esp_spiffs.h"
-
-#include "math.h"
-
-#include "st7789.h"
-#include "fontx.h"
 
 #include "adc_esp32.h"
+#include "ui.h"
 
-static const char *TAG = "UI";
+/* Littlevgl specific */
+#include "lvgl/lvgl.h"
+#include "lvgl_driver.h"
 
-#define MAX_WIDTH CONFIG_WIDTH
-#define MAX_HEIGHT CONFIG_HEIGHT
-#define BORDER_LENGTH 10
+/*********************
+ *      DEFINES
+ *********************/
+// define button events, check button.h for details
+_UI_EVENTS(UI_EVENT)
 
-#define BACKGROUND_COLOR BLACK
-#define TEXT_COLOR YELLOW
+#define TAG "demo"
+#define GAUGE_COLS 2
+#define MAX_INTERACTION_TIME_MS 5000
+#define PRESSURE_SENSOR_ABSENT_TEXT "-"
+#define PRESSURE_SENSOR_OVERLOAD_TEXT "OVERLOAD"
+#define PRESSURE_REFERENCE_POWER_ERROR_TEXT "RefV Err"
 
-FontxFile fx16G[2];
-FontxFile fx32G[2];
-
-TFT_t screen;
-
-static int32_t current_pressure_values[CHAN_COUNT];
-
-void drawText(TFT_t *dev, const char *ascii, FontxFile *fx, uint16_t x, uint16_t y, uint16_t color)
+/**********************
+ *      TYPEDEFS
+ **********************/
+typedef struct
 {
+  uint16_t index;
+  int16_t value;
+} gauge_data_t;
 
-  uint8_t buffer[FontxGlyphBufSize];
-  uint8_t fontWidth;
-  uint8_t fontHeight;
-  uint16_t xpos;
-  uint16_t ypos;
+/**********************
+ *  STATIC PROTOTYPES
+ **********************/
+static void lv_tick_task(void *arg);
+void guiTask(void *pvParameter);
 
-  GetFontx(fx, 0, buffer, &fontWidth, &fontHeight);
+void gui_monitor_cb(lv_disp_drv_t *disp_drv, uint32_t time, uint32_t px);
+void ui_init(void);
 
-  ypos = y - fontHeight / 2 - 1;
-  xpos = x - strlen(ascii) * fontWidth / 2;
-  lcdSetFontDirection(dev, DIRECTION0);
+void create_gauge(lv_obj_t *gauges, uint16_t sensor_index);
+void refresh_gauge(lv_obj_t *container);
+void refresh_gauges();
+void select_next_gauge();
 
-  lcdDrawString(dev, fx, xpos, ypos, (uint8_t *)ascii, color);
+void restart_interaction_timer();
+void group_focus_cb(lv_group_t *group);
+void stop_interaction_cb(void *arg);
+
+/**********************
+ *  STATIC VARIABLES
+ **********************/
+static lv_obj_t *gauges;
+static lv_group_t *selection_group;
+static lv_obj_t *hidden_selection;
+static esp_timer_handle_t interaction_timer = NULL;
+
+/**********************
+ *   APPLICATION MAIN
+ **********************/
+TaskHandle_t gui_start()
+{
+  TaskHandle_t uiTaskHandle;
+
+  //If you want to use a task to create the graphic, you NEED to create a Pinned task
+  //Otherwise there can be problem such as memory corruption and so on
+  xTaskCreatePinnedToCore(guiTask, "gui", 4096 * 2, NULL, 0, &uiTaskHandle, 1);
+
+  return uiTaskHandle;
 }
 
-void drawCross(TFT_t *dev, uint16_t xc, uint16_t yc, uint16_t d, uint16_t color)
+static void lv_tick_task(void *arg)
 {
+  (void)arg;
 
-  uint16_t x0, x1, y0, y1, r;
-
-  r = d / 2;
-
-  x0 = xc < r ? 0 : xc - r;
-  x1 = xc + r > MAX_WIDTH - 1 ? MAX_WIDTH - 1 : xc + r;
-  y0 = yc < r ? 0 : yc - r;
-  y1 = yc + r > MAX_HEIGHT - 1 ? MAX_HEIGHT - 1 : yc + r;
-
-  lcdDrawLine(dev, x0, yc, x1, yc, color);
-  lcdDrawLine(dev, xc, y0, xc, y1, color);
+  lv_tick_inc(portTICK_RATE_MS);
 }
 
-void init_ui()
+//Creates a semaphore to handle concurrent call to lvgl stuff
+//If you wish to call *any* lvgl function from other threads/tasks
+//you should lock on the very same semaphore!
+SemaphoreHandle_t xGuiSemaphore;
+
+void guiTask(void *pvParameter)
 {
-  for (int i = 0; i < CHAN_COUNT; i++)
-  {
-    current_pressure_values[i] = INT32_MIN;
-  }
+  (void)pvParameter;
+  xGuiSemaphore = xSemaphoreCreateMutex();
 
-  InitFontx(fx16G, "/spiffs/ILGH16XB.FNT", ""); // 8x16Dot Gothic
-  InitFontx(fx32G, "/spiffs/ILGH32XB.FNT", ""); // 16x32Dot Gothic
+  lv_init();
 
-  spi_master_init(&screen, CONFIG_MOSI_GPIO, CONFIG_SCLK_GPIO, CONFIG_CS_GPIO, CONFIG_DC_GPIO, CONFIG_RESET_GPIO, CONFIG_BL_GPIO);
-  lcdInit(&screen, CONFIG_WIDTH, CONFIG_HEIGHT, CONFIG_OFFSETX, CONFIG_OFFSETY);
+  lvgl_driver_init();
 
-  // lcdSetFontFill(&screen, BACKGROUND_COLOR);
+  static lv_color_t buf1[DISP_BUF_SIZE];
+  static lv_color_t buf2[DISP_BUF_SIZE];
+  static lv_disp_buf_t disp_buf;
+  lv_disp_buf_init(&disp_buf, buf1, buf2, DISP_BUF_SIZE);
 
-  lcdFillScreen(&screen, BACKGROUND_COLOR);
+  lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.flush_cb = disp_driver_flush;
+  // disp_drv.monitor_cb = gui_monitor_cb;
 
-  for (uint16_t x = 0; x < MAX_WIDTH - 1; x += 119)
-  {
-    for (uint16_t y = 0; y < MAX_HEIGHT - 1; y += 79)
-    {
-      drawCross(&screen, x, y, BORDER_LENGTH * 2, WHITE);
-    }
-  }
+  disp_drv.buffer = &disp_buf;
+  lv_disp_drv_register(&disp_drv);
 
-  char label[4] = "x";
+  const esp_timer_create_args_t periodic_timer_args = {
+      .callback = &lv_tick_task,
+      /* name is optional, but may help identify the timer when debugging */
+      .name = "periodic_gui"};
+  esp_timer_handle_t periodic_timer;
+  ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
+  //On ESP32 it's better to create a periodic task instead of esp_register_freertos_tick_hook
+  ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 10 * 1000)); //10ms (expressed as microseconds)
 
-  for (uint8_t i = 1, y = 0; y < 4; y++)
-  {
-    for (uint8_t x = 0; x < 2; x++, i++)
-    {
-      if (i < 6)
-      {
-        sprintf(label, "%d", i);
-        drawText(&screen, (char *)label, fx16G, x * 119 + 11, y * 79 + 29, RED);
-      }
-      else
-      {
-        drawText(&screen, "bar", fx32G, 180, 235, RED);
-      }
-    }
-  }
-
-  // drawText(&screen, "1", fx16G, 3, 3, RED);
-  // drawText(&screen, "2", fx16G, 180, 75, RED);
-
-  // drawText(&screen, "0.30", fx16G, 60, 155, RED);
-  // drawText(&screen, "0.40", fx16G, 180, 155, RED);
-
-  // drawText(&screen, "0.50", fx16G, 60, 235, RED);
-  // drawText(&screen, "bar", fx16G, 180, 235, RED);
-
-  //
-  // drawText(&screen, "0.10", fx32G, 60, 75, RED);
-  // drawText(&screen, "0.20", fx32G, 180, 75, RED);
-
-  // drawText(&screen, "0.30", fx32G, 60, 155, RED);
-  // drawText(&screen, "0.40", fx32G, 180, 155, RED);
-
-  // drawText(&screen, "0.50", fx32G, 60, 235, RED);
-}
-
-char *value_to_text(int32_t value)
-{
-  char *text = calloc(sizeof(char), 20);
-
-  switch (value)
-  {
-  case PRESSURE_REFERENCE_POWER_ERROR:
-    sprintf(text, "RefVErr");
-    break;
-
-  case PRESSURE_SENSOR_ABSENT:
-    sprintf(text, "-");
-    break;
-
-  case PRESSURE_SENSOR_OVERLOAD:
-    sprintf(text, "!!!");
-    break;
-
-  default:
-    sprintf(text, "%02.2f", (double)value / 100000); // Pa to Bar: 1 bar == 100 000 kPa
-    break;
-  }
-
-  return text;
-}
-
-void update_value(uint8_t position, const char *old_value, const char *new_value)
-{
-  uint16_t ys[] = {75, 155, 235};
-  uint16_t x, y;
-
-  if (position % 2 == 0)
-  {
-    x = 180;
-  }
-  else
-  {
-    x = 60;
-  };
-
-  y = ys[(position - 1) / 2];
-
-  drawText(&screen, old_value, fx32G, x, y, BACKGROUND_COLOR);
-  drawText(&screen, new_value, fx32G, x, y, TEXT_COLOR);
-}
-
-void update_ui()
-{
-  char *old_value;
-  char *new_value;
-
-  for (int i = 0; i < CHAN_COUNT; i++)
-  {
-    if (pressures[i] != current_pressure_values[i])
-    {
-      old_value = value_to_text(current_pressure_values[i]);
-      new_value = value_to_text(pressures[i]);
-
-      current_pressure_values[i] = pressures[i];
-      update_value(i + 1, old_value, new_value);
-
-      free(old_value);
-      free(new_value);
-    }
-  }
-}
-
-void select_next()
-{
-  ESP_LOGI(TAG, "Select next requested");
-}
-
-void calibrate_selected()
-{
-  ESP_LOGI(TAG, "Calibrate selected requested");
-}
-
-void ui_task(void *pvParameters)
-{
-  init_ui();
-
-  update_ui();
+  // lv_demo_widgets();
+  ui_init();
 
   uint32_t ulNotifiedValue;
 
   while (1)
   {
-
-    xTaskNotifyWait(0x00,             /*  Don't clear any notification bits on entry. */
-                    ULONG_MAX,        /* Reset the notification value to 0 on exit. */
-                    &ulNotifiedValue, /* Notified value pass out in
+    xTaskNotifyWait(0x00,              /*  Don't clear any notification bits on entry. */
+                    ULONG_MAX,         /* Reset the notification value to 0 on exit. */
+                    &ulNotifiedValue,  /* Notified value pass out in
                                               reference_voltage. */
-                    portMAX_DELAY);   /* Block indefinitely. */
+                    pdMS_TO_TICKS(5)); /* Block for 5 ms. */
 
-    ESP_LOGI(TAG, "N: %d", ulNotifiedValue);
+    if (ulNotifiedValue != 0)
+      ESP_LOGI(TAG, "N: %d", ulNotifiedValue);
 
-    if ((ulNotifiedValue & 0x01) != 0)
+    if ((ulNotifiedValue & UI_PRESSURE_CHANGED) != 0)
     {
-      update_ui();
+      refresh_gauges();
     }
 
-    if ((ulNotifiedValue & 0x02) != 0)
+    if ((ulNotifiedValue & UI_BUTTON_TAPPED) != 0)
     {
-      select_next();
+      select_next_gauge();
     }
 
-    if ((ulNotifiedValue & 0x04) != 0)
+    if ((ulNotifiedValue & UI_BUTTON_PUSHED) != 0)
     {
-      calibrate_selected();
+      restart_interaction_timer();
+    }
+
+    if ((ulNotifiedValue & UI_BUTTON_HELD_3_SEC) != 0)
+    {
+      ESP_LOGI(TAG, "Button held");
+    }
+
+    //Try to lock the semaphore, if success, call lvgl stuff
+    if (xSemaphoreTake(xGuiSemaphore, (TickType_t)10) == pdTRUE)
+    {
+      lv_task_handler();
+      xSemaphoreGive(xGuiSemaphore);
     }
   }
+
+  //A task should NEVER return
+  vTaskDelete(NULL);
+}
+
+void gui_monitor_cb(lv_disp_drv_t *disp_drv, uint32_t time, uint32_t px)
+{
+  ESP_LOGI(TAG, "%d px refreshed in %d ms", px, time);
+}
+
+void group_focus_cb(lv_group_t *group)
+{
+  ESP_LOGI(TAG, "Group focus event");
+  if (lv_group_get_focused(group) == hidden_selection)
+    ESP_LOGI(TAG, "Hidden obj got focused");
+}
+
+void ui_init(void)
+{
+  const esp_timer_create_args_t interaction_timer_args = {
+      .callback = &stop_interaction_cb,
+      .name = "interaction_watchdog"};
+
+  ESP_ERROR_CHECK(esp_timer_create(&interaction_timer_args, &interaction_timer));
+
+  hidden_selection = lv_obj_create(lv_scr_act(), NULL);
+  lv_obj_set_hidden(hidden_selection, true);
+  // lv_obj_set_event_cb(hidden_selection, hidden_selection_event_cb);
+
+  selection_group = lv_group_create();
+  lv_group_add_obj(selection_group, hidden_selection);
+  lv_group_set_focus_cb(selection_group, group_focus_cb);
+
+  gauges = lv_cont_create(lv_scr_act(), NULL);
+
+  lv_obj_set_style_local_pad_inner(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(9));
+  lv_obj_set_style_local_pad_left(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(10));
+  lv_obj_set_style_local_pad_right(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(0));
+  lv_obj_set_style_local_pad_top(gauges, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_DPX(9));
+
+  // lv_obj_add_style(gauges, LV_CONT_PART_MAIN, &style);
+  lv_cont_set_fit(gauges, LV_FIT_PARENT);
+  lv_cont_set_layout(gauges, LV_LAYOUT_PRETTY_TOP);
+
+  for (uint16_t i = 0; i < CHAN_COUNT; i++)
+  {
+    create_gauge(gauges, i);
+  }
+}
+
+void create_gauge(lv_obj_t *gauges, uint16_t sensor_index)
+{
+  gauge_data_t *gauge_data = calloc(sizeof(gauge_data_t), 1);
+  gauge_data->index = sensor_index;
+  gauge_data->value = INT16_MIN;
+
+  lv_obj_t *container = lv_obj_create(gauges, NULL);
+  lv_obj_set_size(container, 105, 71);
+
+  lv_obj_set_user_data(container, gauge_data);
+
+  // gauge
+
+  static lv_style_t gauge_style;
+  lv_style_init(&gauge_style);
+
+  lv_style_set_border_width(&gauge_style, LV_STATE_DEFAULT, 0);
+  lv_style_set_radius(&gauge_style, LV_STATE_DEFAULT, LV_RADIUS_CIRCLE);
+  lv_style_set_pad_left(&gauge_style, LV_STATE_DEFAULT, 0);
+  lv_style_set_pad_right(&gauge_style, LV_STATE_DEFAULT, 0);
+  lv_style_set_pad_top(&gauge_style, LV_STATE_DEFAULT, LV_DPX(3));
+  lv_style_set_pad_inner(&gauge_style, LV_STATE_DEFAULT, LV_DPX(25));
+  lv_style_set_scale_width(&gauge_style, LV_STATE_DEFAULT, LV_DPX(10));
+
+  lv_style_set_line_color(&gauge_style, LV_STATE_DEFAULT, lv_theme_get_color_primary());
+  lv_style_set_scale_grad_color(&gauge_style, LV_STATE_DEFAULT, lv_theme_get_color_primary());
+  lv_style_set_scale_end_color(&gauge_style, LV_STATE_DEFAULT, lv_color_hex3(0x888));
+  lv_style_set_line_width(&gauge_style, LV_STATE_DEFAULT, LV_DPX(2));
+  lv_style_set_scale_end_line_width(&gauge_style, LV_STATE_DEFAULT, LV_DPX(2));
+
+  lv_obj_t *gauge = lv_linemeter_create(container, NULL);
+  lv_obj_add_style(gauge, LV_LABEL_PART_MAIN, &gauge_style);
+
+  lv_obj_set_size(gauge, 65, 65);
+  lv_obj_align(gauge, NULL, LV_ALIGN_CENTER, 0, 0);
+
+  lv_linemeter_set_range(gauge, 0, 800);
+  lv_linemeter_set_scale(gauge, 240, 23);
+
+  // labels
+
+  lv_obj_t *label;
+
+  // value label
+
+  label = lv_label_create(gauge, NULL);
+  lv_label_set_text(label, PRESSURE_SENSOR_ABSENT_TEXT);
+  lv_obj_align(label, NULL, LV_ALIGN_CENTER, 0, 0);
+  lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
+
+  // static labels
+
+  static lv_style_t label_style;
+
+  lv_style_init(&label_style);
+  lv_style_set_text_font(&label_style, LV_STATE_DEFAULT, lv_theme_get_font_small());
+  lv_style_set_text_color(&label_style, LV_STATE_DEFAULT, lv_theme_get_color_primary());
+
+  // index
+
+  label = lv_label_create(container, NULL);
+  lv_obj_add_style(label, LV_LABEL_PART_MAIN, &label_style);
+  lv_label_set_text_fmt(label, "%d", sensor_index + 1);
+  lv_obj_align(label, NULL, LV_ALIGN_IN_TOP_LEFT, LV_DPX(5), LV_DPX(3));
+
+  // unit
+
+  label = lv_label_create(container, NULL);
+  lv_obj_add_style(label, LV_LABEL_PART_MAIN, &label_style);
+  lv_label_set_static_text(label, "kPa");
+  lv_obj_align(label, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, -5);
+
+  lv_group_add_obj(selection_group, container);
+}
+
+void refresh_gauge(lv_obj_t *container)
+{
+  gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data(container);
+  int32_t value = get_pressure(data->index);
+
+  if (data->value != value)
+  {
+    data->value = value;
+
+    char text_value[20];
+    int32_t gauge_value = 0;
+
+    lv_obj_t *gauge, *gauge_text;
+    lv_obj_type_t type;
+
+    lv_obj_t *child = lv_obj_get_child(container, NULL);
+    lv_obj_get_type(child, &type);
+
+    while (child && strcmp(type.type[0], "lv_linemeter") != 0)
+    {
+      child = lv_obj_get_child(container, child);
+      lv_obj_get_type(child, &type);
+    };
+
+    gauge = child;
+    gauge_text = lv_obj_get_child(gauge, NULL);
+
+    switch (value)
+    {
+    case PRESSURE_REFERENCE_POWER_ERROR:
+      lv_snprintf(text_value, sizeof(text_value), "%s", PRESSURE_REFERENCE_POWER_ERROR_TEXT);
+      break;
+
+    case PRESSURE_SENSOR_ABSENT:
+      lv_snprintf(text_value, sizeof(text_value), "%s", PRESSURE_SENSOR_ABSENT_TEXT);
+      break;
+
+    case PRESSURE_SENSOR_OVERLOAD:
+      lv_snprintf(text_value, sizeof(text_value), "%s", PRESSURE_SENSOR_OVERLOAD_TEXT);
+      gauge_value = lv_linemeter_get_max_value(gauge);
+      break;
+
+    default:
+      gauge_value = value / 1000; // Pa to Kpa
+      lv_snprintf(text_value, sizeof(text_value), "%03d", gauge_value);
+      break;
+    }
+
+    lv_linemeter_set_value(gauge, gauge_value);
+
+    lv_label_set_text(gauge_text, text_value);
+    lv_obj_align(gauge_text, NULL, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_align(gauge_text, LV_LABEL_ALIGN_CENTER);
+  }
+}
+
+void refresh_gauges()
+{
+  lv_obj_t *gauge = lv_obj_get_child(gauges, NULL);
+
+  while (gauge)
+  {
+    refresh_gauge(gauge);
+    gauge = lv_obj_get_child(gauges, gauge);
+  };
+}
+
+void event_cb(lv_obj_t *obj, lv_event_t event)
+{
+  ESP_LOGI(TAG, "Event: %d", event);
+}
+
+void select_next_gauge()
+{
+  lv_group_focus_next(selection_group);
+}
+
+void stop_interaction_cb(void *arg)
+{
+  esp_timer_stop(interaction_timer);
+  lv_group_focus_obj(hidden_selection);
+}
+
+void restart_interaction_timer()
+{
+  esp_timer_stop(interaction_timer);
+  ESP_ERROR_CHECK(esp_timer_start_once(interaction_timer, MAX_INTERACTION_TIME_MS * 1000)); // in microseconds
 }
