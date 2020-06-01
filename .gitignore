@@ -74,5 +74,3 @@ build
 
 # lock files for examples and components
 dependencies.lock
-
-/components/etf_serializer
