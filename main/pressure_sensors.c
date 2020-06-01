@@ -173,23 +173,28 @@ void freePressureHistory(int index, void *pressure_history)
 
 void do_calibrate_sensor(uint16_t index)
 {
-    adc_channel_t channel = channels[index];
-
-    uint32_t ref_v = measure_reference_voltage();
-
-    // uint32_t actual_zero = 510;
-    // double c = round((double)actual_zero / min_voltage * PRECISION) / PRECISION;
-
-    uint32_t measured_voltage = measure_absolute_voltage(channel);
-
-    if (measured_voltage > 0)
-    {
-        uint32_t actual_min_v = calc_actual_voltage(measured_voltage, input_voltage_div);
-        uint32_t expected_min_v = round(ref_v * SENSOR_MIN_PRESSURE_V_COEFF);
-        double shift = (double)actual_min_v / expected_min_v;
-        set_sensor_voltage_shift(index, shift);
-    }
+    ESP_LOGI(TAG, "I've got a calibration request for sensor #%d, but it has no sense, so I skip it", index);
 }
+
+// void do_calibrate_sensor(uint16_t index)
+// {
+//     adc_channel_t channel = channels[index];
+
+//     uint32_t ref_v = measure_reference_voltage();
+
+//     // uint32_t actual_zero = 510;
+//     // double c = round((double)actual_zero / min_voltage * PRECISION) / PRECISION;
+
+//     uint32_t measured_voltage = measure_absolute_voltage(channel);
+
+//     if (measured_voltage > 0)
+//     {
+//         uint32_t actual_min_v = calc_actual_voltage(measured_voltage, input_voltage_div);
+//         uint32_t expected_min_v = round(ref_v * SENSOR_MIN_PRESSURE_V_COEFF);
+//         double shift = (double)actual_min_v / expected_min_v;
+//         set_sensor_voltage_shift(index, shift);
+//     }
+// }
 
 int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_voltage)
 {
