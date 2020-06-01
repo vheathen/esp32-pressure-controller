@@ -138,8 +138,8 @@ void guiTask(void *pvParameter)
                                               reference_voltage. */
                     pdMS_TO_TICKS(5)); /* Block for 5 ms. */
 
-    if (ulNotifiedValue != 0)
-      ESP_LOGI(TAG, "N: %d", ulNotifiedValue);
+    // if (ulNotifiedValue != 0)
+    //   ESP_LOGI(TAG, "N: %d", ulNotifiedValue);
 
     if ((ulNotifiedValue & UI_PRESSURE_CHANGED) != 0)
     {

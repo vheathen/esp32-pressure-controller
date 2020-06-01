@@ -22,11 +22,6 @@
 
 static const char *TAG = "SENSORS";
 
-/*
-860 mV - 100 kPa
-
-*/
-
 typedef struct
 {
     uint8_t index;
@@ -45,7 +40,7 @@ _SENSOR_EVENTS(DEF_EVENT)
 #define SENSOR_MAX_PRESSURE_V_COEFF 0.9
 
 #define PRESSURE_HISTORY_TLS_INDEX 1
-#define PRESSURE_HISTORY_VALUES_COUNT 5
+#define PRESSURE_HISTORY_VALUES_COUNT 25
 #define PRESSURE_MEASURE_CYCLE_MS 40 // in miliseconds
 
 #define DEFAULT_VREF 1100 // Use adc2_vref_to_gpio() to obtain a better estimate
@@ -168,7 +163,7 @@ uint32_t measure_absolute_voltage(adc_channel_t channel)
 
 uint32_t calc_actual_voltage(uint32_t voltage, double div)
 {
-    return (uint32_t)round(voltage / div / 10) * 10;
+    return (uint32_t)round(voltage / div / 1) * 1;
 }
 
 void freePressureHistory(int index, void *pressure_history)
@@ -209,8 +204,8 @@ int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_volta
 
     // double actual_c = 1.055900621;
 
-    uint32_t min_voltage = reference_voltage * SENSOR_MIN_PRESSURE_V_COEFF * shift;
-    uint32_t max_voltage = reference_voltage * SENSOR_MAX_PRESSURE_V_COEFF * shift;
+    uint32_t min_voltage = reference_voltage * SENSOR_MIN_PRESSURE_V_COEFF; // * shift;
+    uint32_t max_voltage = reference_voltage * SENSOR_MAX_PRESSURE_V_COEFF; // * shift;
 
     // ESP_LOGI(TAG, "shift: %f, min_v: %d, max_v: %d", shift, min_voltage, max_voltage);
 
@@ -236,7 +231,7 @@ int32_t calc_pressure(uint16_t index, uint32_t voltage, uint32_t reference_volta
 
         *current_pressure_index = ++(*current_pressure_index) < PRESSURE_HISTORY_VALUES_COUNT ? *current_pressure_index : 1;
 
-        *(pressure_history + *current_pressure_index) = (voltage < min_voltage) ? 0 : round((double)(voltage - min_voltage) / max_voltage * SENSOR_MAX_PRESSURE / 1000) * 1000;
+        *(pressure_history + *current_pressure_index) = (voltage < min_voltage) ? 0 : round((double)(voltage - min_voltage) / (max_voltage - min_voltage) * SENSOR_MAX_PRESSURE / 1000) * 1000;
 
         for (int i = 1; i <= PRESSURE_HISTORY_VALUES_COUNT; i++)
         {
