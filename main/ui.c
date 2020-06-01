@@ -19,6 +19,12 @@
 #include "lvgl/lvgl.h"
 #include "lvgl_driver.h"
 
+/*
+ST7789 Orientation:
+270 deg:  {ST7789_MADCTL, {0x60}, 1},
+0 deg: {ST7789_MADCTL, {0x0}, 1},
+*/
+
 /*********************
  *      DEFINES
  *********************/
