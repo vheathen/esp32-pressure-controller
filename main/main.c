@@ -12,6 +12,7 @@
 
 #include <time.h>
 #include <sys/time.h>
+#include "esp_event.h"
 
 #include "pressure_sensors.h"
 #include "ui.h"
@@ -31,8 +32,6 @@ void nvs_init();
 void app_main(void)
 {
 
-	// xTaskCreate(ui_task, "UI", 1024 * 6, NULL, 5, &uiTaskHandle);
-
 	// const esp_timer_create_args_t stats_timer_args = {
 	// 		.callback = &stats_task,
 	// 		/* name is optional, but may help identify the timer when debugging */
@@ -42,11 +41,13 @@ void app_main(void)
 	// //On ESP32 it's better to create a periodic task instead of esp_register_freertos_tick_hook
 	// ESP_ERROR_CHECK(esp_timer_start_periodic(stats_timer, 10000 * 1000)); //1000ms (expressed as microseconds)
 
+	ESP_ERROR_CHECK(esp_event_loop_create_default());
+
 	nvs_init();
 
 	uiTaskHandle = gui_start();
 
-	measure_start(uiTaskHandle);
+	measure_start();
 	button_init(uiTaskHandle);
 }
 

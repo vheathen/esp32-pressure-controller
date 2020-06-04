@@ -3,8 +3,19 @@
 
 #include <limits.h>
 #include "driver/adc.h"
+#include "esp_event.h"
 
-#include "utils.h"
+#include "utils.h" // events declaration macroses etc
+
+ESP_EVENT_DECLARE_BASE(PRESSURE_SENSORS_EVENTS); // declaration of the pressure sensors events family
+
+typedef int32_t pressure_value_t;
+
+typedef struct sensor_pressure
+{
+  uint8_t index;
+  pressure_value_t pressure;
+} sensor_pressure_t;
 
 enum pressure_sensor_states
 {
@@ -13,23 +24,24 @@ enum pressure_sensor_states
   PRESSURE_SENSOR_OVERLOAD
 };
 
-#define CHAN_COUNT 5
+#define SENSORS_COUNT 5
 
-#define _SENSOR_EVENTS(EVENT)  \
-  EVENT(SENSOR_REF_V_MEASURED) \
-  EVENT(SENSOR_CALIBRATION_REQUESTED)
+#define _PRESSURE_SENSORS_EVENTS(EVENT) \
+  EVENT(PRESSURE_SENSOR_REF_V_MEASURED) \
+  EVENT(PRESSURE_SENSOR_VALUE_CHANGED)  \
+  EVENT(PRESSURE_SENSOR_CALIBRATION_REQUESTED)
 
 enum SENSOR_EVENTS
 {
-  _SENSOR_EVENTS(DEF_INT_EVENT)
-      _SENSOR_EVENT_LAST = ULONG_MAX
+  _PRESSURE_SENSORS_EVENTS(DEF_INT_EVENT)
+      _PRESSURE_SENSORS_EVENT_LAST = ULONG_MAX
 };
 
-_SENSOR_EVENTS(DEF_EVENT_EXTERN)
+_PRESSURE_SENSORS_EVENTS(DEF_EVENT_EXTERN)
 
-void measure_start(TaskHandle_t handle);
+void measure_start();
 
-int32_t get_pressure(uint16_t index);
-void calibrate_sensor(uint16_t index);
+pressure_value_t get_pressure(uint8_t index);
+void calibrate_sensor(uint8_t index);
 
 #endif // _PRESSURE_SENSORS_H_

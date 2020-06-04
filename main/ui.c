@@ -32,6 +32,7 @@ ST7789 Orientation:
 _UI_EVENTS(DEF_EVENT)
 
 #define TAG "UI"
+#define GUI_CPU_CORE 1
 #define MAX_INTERACTION_TIME_MS 5000
 #define PRESSURE_SENSOR_ABSENT_TEXT "-"
 #define PRESSURE_SENSOR_OVERLOAD_TEXT "OVERLOAD"
@@ -60,6 +61,8 @@ void refresh_gauge(lv_obj_t *container);
 void refresh_gauges();
 void select_next_gauge();
 
+static void pressure_sensor_update_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+
 void request_sensor_calibration();
 
 void restart_interaction_timer();
@@ -74,6 +77,13 @@ static lv_group_t *selection_group;
 static lv_obj_t *hidden_selection;
 static esp_timer_handle_t interaction_timer = NULL;
 
+static pressure_value_t sensor_pressure_values[] = {[0 ... SENSORS_COUNT] = PRESSURE_SENSOR_ABSENT};
+
+//Creates a semaphore to handle concurrent call to lvgl stuff
+//If you wish to call *any* lvgl function from other threads/tasks
+//you should lock on the very same semaphore!
+static SemaphoreHandle_t xGuiSemaphore;
+
 /**********************
  *   APPLICATION MAIN
  **********************/
@@ -83,7 +93,7 @@ TaskHandle_t gui_start()
 
   //If you want to use a task to create the graphic, you NEED to create a Pinned task
   //Otherwise there can be problem such as memory corruption and so on
-  xTaskCreatePinnedToCore(guiTask, "gui", 4096 * 2, NULL, 0, &uiTaskHandle, 1);
+  xTaskCreatePinnedToCore(guiTask, "gui", 4096 * 2, NULL, 0, &uiTaskHandle, GUI_CPU_CORE);
 
   return uiTaskHandle;
 }
@@ -94,11 +104,6 @@ static void lv_tick_task(void *arg)
 
   lv_tick_inc(portTICK_RATE_MS);
 }
-
-//Creates a semaphore to handle concurrent call to lvgl stuff
-//If you wish to call *any* lvgl function from other threads/tasks
-//you should lock on the very same semaphore!
-SemaphoreHandle_t xGuiSemaphore;
 
 void guiTask(void *pvParameter)
 {
@@ -134,6 +139,10 @@ void guiTask(void *pvParameter)
   // lv_demo_widgets();
   ui_init();
 
+  TaskHandle_t uiTaskHandle = xTaskGetCurrentTaskHandle();
+
+  esp_event_handler_instance_register(PRESSURE_SENSORS_EVENTS, PRESSURE_SENSOR_VALUE_CHANGED, pressure_sensor_update_handler, uiTaskHandle, NULL);
+
   uint32_t ulNotifiedValue;
 
   while (1)
@@ -143,9 +152,6 @@ void guiTask(void *pvParameter)
                     &ulNotifiedValue,  /* Notified value pass out in
                                               reference_voltage. */
                     pdMS_TO_TICKS(5)); /* Block for 5 ms. */
-
-    // if (ulNotifiedValue != 0)
-    //   ESP_LOGI(TAG, "N: %d", ulNotifiedValue);
 
     if ((ulNotifiedValue & UI_PRESSURE_CHANGED) != 0)
     {
@@ -218,10 +224,12 @@ void ui_init(void)
   lv_cont_set_fit(gauges, LV_FIT_PARENT);
   lv_cont_set_layout(gauges, LV_LAYOUT_PRETTY_TOP);
 
-  for (uint16_t i = 0; i < CHAN_COUNT; i++)
+  for (uint16_t i = 0; i < SENSORS_COUNT; i++)
   {
     create_gauge(gauges, i);
   }
+
+  refresh_gauges();
 }
 
 void create_gauge(lv_obj_t *gauges, uint16_t sensor_index)
@@ -302,7 +310,7 @@ void create_gauge(lv_obj_t *gauges, uint16_t sensor_index)
 void refresh_gauge(lv_obj_t *container)
 {
   gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data(container);
-  int32_t value = get_pressure(data->index);
+  int32_t value = sensor_pressure_values[data->index];
 
   if (data->value != value)
   {
@@ -397,4 +405,15 @@ void request_sensor_calibration()
     gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data(selected);
     calibrate_sensor(data->index);
   }
+}
+
+static void pressure_sensor_update_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+{
+
+  TaskHandle_t uiTaskHandle = (TaskHandle_t)event_handler_arg;
+  sensor_pressure_t *sensor = (sensor_pressure_t *)event_data;
+
+  sensor_pressure_values[sensor->index] = sensor->pressure;
+
+  xTaskNotify(uiTaskHandle, UI_PRESSURE_CHANGED, eSetBits);
 }
