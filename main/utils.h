@@ -1,6 +1,8 @@
 #ifndef _UTILS_H_
 #define _UTILS_H_
 
+#include "esp_log.h"
+
 #define ESP_MEM_CHECK(TAG, a, action)                                                      \
   if (!(a))                                                                                \
   {                                                                                        \

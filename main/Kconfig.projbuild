@@ -1,4 +1,4 @@
-menu "Button"
+menu "Pressure sensor"
     config BUTTON_GPIO
         int "GPIO for the button"
         range 1 38
@@ -8,4 +8,14 @@ menu "Button"
         int "Button active Level"
         range 0 1
         default 0
+
+    config SOCKET_1_CONTROL_PIN
+        int "GPIO pin for the socket #1 (yellow wire)"
+        range 1 38
+        default 13
+
+    config SOCKET_2_CONTROL_PIN
+        int "GPIO pin for the socket #2 (green wire)"
+        range 1 38
+        default 26
 endmenu

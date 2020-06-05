@@ -120,11 +120,13 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# Button
+# Pressure sensor
 #
 CONFIG_BUTTON_GPIO=27
 CONFIG_BUTTON_ACTIVE_LEVEL=1
-# end of Button
+CONFIG_SOCKET_1_CONTROL_PIN=13
+CONFIG_SOCKET_2_CONTROL_PIN=26
+# end of Pressure sensor
 
 #
 # Compiler options
