@@ -1,0 +1,5 @@
+AlignConsecutiveAssignments: true
+BreakBeforeBraces: Allman
+AllowShortIfStatementsOnASingleLine: false
+IndentCaseLabels: false
+ColumnLimit: 0
