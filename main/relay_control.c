@@ -11,14 +11,14 @@
 
 static const char *TAG = "RELAY_CTRL";
 
-#define MAX_ON_TIME_MS 20 * 1000  // 5 * 60 * 1000  // 5 minutes in ms
-#define MIN_OFF_TIME_MS 20 * 1000 // 5 * 60 * 1000 // 5 minutes in ms
+#define MAX_ON_TIME_MS 5 * 60 * 1000  // 5 minutes in ms
+#define MIN_OFF_TIME_MS 5 * 60 * 1000 // 5 minutes in ms
 
 #define PRESSURE_SENSOR_INDEX 0
 #define RELAY_INDEX 0
 
 #define PRESSURE_LOW_MARK 250000  // pa
-#define PRESSURE_HIGH_MARK 340000 // pa
+#define PRESSURE_HIGH_MARK 820000 // pa
 
 enum relay_control_flags
 {
