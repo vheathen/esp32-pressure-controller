@@ -3,21 +3,22 @@
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+
 #include "driver/gpio.h"
-#include "esp_freertos_hooks.h"
 #include "esp_err.h"
+#include "esp_freertos_hooks.h"
 #include "esp_log.h"
 #include "esp_system.h"
 
-#include "utils.h"
 #include "pressure_sensors.h"
 #include "ui.h"
+#include "utils.h"
 
 /* Littlevgl specific */
 #include "lvgl/lvgl.h"
-#include "lvgl_driver.h"
+#include "lvgl_helpers.h"
 
 /*
 ST7789 Orientation:
@@ -74,7 +75,7 @@ void stop_interaction_cb(void *arg);
  **********************/
 static lv_obj_t *gauges;
 static lv_group_t *selection_group;
-static lv_obj_t *hidden_selection;
+static lv_obj_t *hidden_selection           = NULL;
 static esp_timer_handle_t interaction_timer = NULL;
 
 static pressure_value_t sensor_pressure_values[] = {[0 ... SENSORS_COUNT] = PRESSURE_SENSOR_ABSENT};
@@ -201,7 +202,7 @@ void ui_init(void)
 {
   const esp_timer_create_args_t interaction_timer_args = {
       .callback = &stop_interaction_cb,
-      .name = "interaction_watchdog"};
+      .name     = "interaction_watchdog"};
 
   ESP_ERROR_CHECK(esp_timer_create(&interaction_timer_args, &interaction_timer));
 
@@ -235,8 +236,8 @@ void ui_init(void)
 void create_gauge(lv_obj_t *gauges, uint16_t sensor_index)
 {
   gauge_data_t *gauge_data = calloc(sizeof(gauge_data_t), 1);
-  gauge_data->index = sensor_index;
-  gauge_data->value = INT16_MIN;
+  gauge_data->index        = sensor_index;
+  gauge_data->value        = INT16_MIN;
 
   lv_obj_t *container = lv_obj_create(gauges, NULL);
   lv_obj_set_size(container, 105, 71);
@@ -310,7 +311,7 @@ void create_gauge(lv_obj_t *gauges, uint16_t sensor_index)
 void refresh_gauge(lv_obj_t *container)
 {
   gauge_data_t *data = (gauge_data_t *)lv_obj_get_user_data(container);
-  int32_t value = sensor_pressure_values[data->index];
+  int32_t value      = sensor_pressure_values[data->index];
 
   if (data->value != value)
   {
@@ -331,7 +332,7 @@ void refresh_gauge(lv_obj_t *container)
       lv_obj_get_type(child, &type);
     };
 
-    gauge = child;
+    gauge      = child;
     gauge_text = lv_obj_get_child(gauge, NULL);
 
     switch (value)
@@ -387,7 +388,10 @@ void select_next_gauge()
 void stop_interaction_cb(void *arg)
 {
   esp_timer_stop(interaction_timer);
-  lv_group_focus_obj(hidden_selection);
+  if (hidden_selection != NULL)
+  {
+    lv_group_focus_obj(hidden_selection);
+  }
 }
 
 void restart_interaction_timer()

@@ -18,6 +18,7 @@
 #include "pressure_sensors.h"
 #include "relay_control.h"
 #include "ui.h"
+#include "wifi.h"
 
 static TaskHandle_t uiTaskHandle;
 
@@ -46,8 +47,10 @@ void app_main(void)
 
   nvs_init();
 
+  wifi_init();
+
   uiTaskHandle = gui_start();
-  button_init(uiTaskHandle);
+  // button_init(uiTaskHandle);
 
   relay_control_start();
   measure_start();
