@@ -1,7 +1,9 @@
 # Pressure controller
 An ESP32-based 5 channel pressure controller prototype.
-Its main purpose just to show pressure as of now.
-Latter (soon) it is going to manage 220V socket to control an air compressor.
+Its main purpose just to show pressure.
+~~Latter (soon) it is going to manage 220V socket to control an air compressor.~~
+It is already can turn ON\OFF the power socket depending on the pressure and maximum continuous working time following by a minimum rest period. Parameters are hardcoded as of yet. Now it serves as an additional smart pressure relay for the air compressor. 
+*WARNING! This project is not intended to be used as a safety device software!!! Always use air compressor's own pressure relay and safety valves!!!*
 OTA firmware update support is also in the list.
 
 Parts:
@@ -26,6 +28,7 @@ A few images:
 ![3](images/3.jpg?raw=true)
 ![4](images/4.jpg?raw=true)
 ![5](images/5.jpg?raw=true)
+![5](images/6.jpg?raw=true)
 
 ## How to start
 Clone this repo and its submodules:
@@ -36,7 +39,8 @@ cd esp32-pressure-controller
 idf.py menuconfig
 ```
 
-You should went to `Button` menu and configure a button GPIO number (the button lost its functions so you might skip this).
+You should go to the `Pressure sensor` menu and configure a button GPIO number (the button lost its functions so you can skip this step). Then you should set GPIO pins you've connected your socket controlling relays to.
+Pressure sensor to control socket, relay index and pressure settings\timings are currently defined in 'relay_control.c'.
 It is necessary to configure LVGL in `Component config -> LittlevGL (LVGL)...` sections.
 Please include Montserrat 12pt font.
 
