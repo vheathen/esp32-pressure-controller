@@ -1,23 +1,27 @@
 # Pressure controller
-An ESP32-based 5 channel pressure controller prototype.
+An ESP32-based 5 channel pressure controller prototype. 
+
 Its main purpose just to show pressure.
 ~~Latter (soon) it is going to manage 220V socket to control an air compressor.~~
 It is already can turn ON\OFF the power socket depending on the pressure and maximum continuous working time following by a minimum rest period. Parameters are hardcoded as of yet. Now it serves as an additional smart pressure relay for the air compressor. 
+
 *WARNING! This project is not intended to be used as a safety device software!!! Always use air compressor's own pressure relay and safety valves!!!*
+
 OTA firmware update support is also in the list.
 
 Parts:
-[ESP32](https://www.espressif.com/en/products/socs/esp32/overview) Doit DevKit V1
-ST7789 1.3" 240x240 IPS LCD screen with SPI-interface
-A button
-A few RJ-9 sockets
-A bunch of resistors for voltage dividers
-Wires
-Unnamed 5V analog pressure sensors from Ali
-A small food container from the nearest store
-
-[ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
-[LVGL](https://lvgl.io)
+- [ESP32](https://www.espressif.com/en/products/socs/esp32/overview) Doit DevKit V1
+- ST7789 1.3" 240x240 IPS LCD screen with SPI-interface
+- A button
+- A few RJ-9 sockets
+- A bunch of resistors for voltage dividers
+- Wires
+- Unnamed 5V analog pressure sensors from Ali
+- A small food container from the nearest store
+- A dual power socket case
+- Couple Crydom CX240D5 solid-state relays
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
+- [LVGL](https://lvgl.io)
 
 A very brief review [on YouTube](https://youtu.be/pnPwiyVQR3A).
 
